@@ -4,11 +4,12 @@ from graphviz import Digraph
 class Value:
     """Differentiable float"""
 
-    def __init__(self, value, parents=(), op=""):
+    def __init__(self, value, parents=(), op="", label=""):
         self.data = value
         self.parents = parents
         self.op = op
         self.grad = 0
+        self.label = label
         # Backward is a function because it only starts after the forward propagation
         # We can't compute during it, it's a callback
 
@@ -38,7 +39,21 @@ class Value:
 
     def __add__(self, other):
         other = other if isinstance(other, Value) else Value(other)
-        return Value(self.data + other.data, parents=(self, other), op="+")
+        res = Value(self.data + other.data, parents=(self, other), op="+")
+
+        # here i set self.backward and other.backward
+        # because I know how they are being used
+        # I know how to derivate the expressions they appear on
+
+        def _self_add_grad():
+            self.grad = res.grad  # d add/d self => d (self + other) / d self => 1
+
+        def _other_add_grad():
+            other.grad = res.grad
+
+        self._backward = _self_add_grad
+        other._backward = _other_add_grad
+        return res
 
     def __radd__(self, other):
         return self + other
@@ -54,7 +69,20 @@ class Value:
 
     def __mul__(self, other):
         other = other if isinstance(other, Value) else Value(other)
-        return Value(self.data * other.data, parents=(self, other), op="*")
+        res = Value(self.data * other.data, parents=(self, other), op="*")
+
+        def _self_mul_grad():
+            self.grad = res.grad * other.data  # d (self * other) / d (self) = other
+            pass
+
+        def _other_mul_grad():
+            other.grad = res.grad * self.data
+            pass
+
+        self._backward = _self_mul_grad
+        other._backward = _other_mul_grad
+
+        return res
 
     def __rmul__(self, other):
         return self * other
@@ -72,7 +100,7 @@ class Value:
         return Value(self.data**other, parents=(self,), op="**")
 
     def __neg__(self):
-        return -1 * self
+        return self * -1
 
     def _make_graph(self):
         nodes, edges = set(), set()
@@ -97,7 +125,7 @@ class Value:
             # create a value node
             dot.node(
                 name=str(id(n)),
-                label=f"{{data: {n.data:.4f} | grad: {n.grad:.4f}}}",
+                label=f"{{{n.label} | data: {n.data:.4f} | grad: {n.grad:.4f}}}",
                 shape="record",
             )
             if n.op:
@@ -109,3 +137,19 @@ class Value:
             dot.edge(str(id(n1)), str(id(n2)) + n2.op)
 
         return dot
+
+    def get_parents_topo(self):
+        visited = set()
+        parents = []
+
+        def visit(node):
+            if node not in visited:
+                visited.add(node)
+
+                for parent in node.parents:
+                    visit(parent)
+
+                parents.append(node)
+
+        visit(self)
+        return parents
